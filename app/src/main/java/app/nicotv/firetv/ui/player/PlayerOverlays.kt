@@ -254,6 +254,8 @@ fun PlayerPanel(
                             else "同時に表示する上限（取得量とは別）。決定で切替",
                         ) { store.updateSettings { it.copy(density = Density.entries.after(it.density)) } }
                     }
+                    item { PanelRow("右にコメント一覧", if (settings.commentListSide) "表示" else "非表示", note = "再生位置までのコメントを一覧で追う。映像は左に縮まる") { store.updateSettings { it.copy(commentListSide = !it.commentListSide) } } }
+                    if (settings.commentListSide) item { PanelRow("コメント一覧の幅", "${(settings.commentListWidth * 100).toInt()}%") { store.updateSettings { it.copy(commentListWidth = listOf(0.22f, 0.26f, 0.32f, 0.38f).after(it.commentListWidth)) } } }
                     item { PanelRow("文字の大きさ", "${(settings.commentScale * 100).toInt()}%") { store.updateSettings { it.copy(commentScale = listOf(0.8f, 1.0f, 1.2f, 1.4f).after(it.commentScale)) } } }
                     item { PanelRow("不透明度", "${(settings.commentOpacity * 100).toInt()}%") { store.updateSettings { it.copy(commentOpacity = listOf(0.5f, 0.7f, 0.9f, 1.0f).after(it.commentOpacity)) } } }
                     item { PanelRow("古いコメントを薄く", if (settings.fadeOldComments) "オン" else "オフ", note = "投稿が古いものほど薄く（最低15%）。新しいコメントが目立つ") { store.updateSettings { it.copy(fadeOldComments = !it.fadeOldComments) } } }

@@ -25,13 +25,23 @@ if ! command -v adb >/dev/null 2>&1; then
     echo "adb が見つかりません。Android SDK Platform-Tools を PATH に追加してください。" >&2
     exit 1
 fi
-if [ -n "${JAVA_HOME:-}" ]; then
-    if [ ! -x "$JAVA_HOME/bin/java" ]; then
-        echo "JAVA_HOME の場所に Java がありません。JDK 17 の場所を確認してください。" >&2
-        exit 1
-    fi
-elif ! command -v java >/dev/null 2>&1; then
-    echo "Java が見つかりません。JDK 17 を設定してください。" >&2
+# JDK 17 を探す。macOS の /usr/bin/java は Java が無くても存在する入口なので、実際に動くか確かめる
+if [ -z "${JAVA_HOME:-}" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
+    JAVA_HOME=""
+    for candidate in \
+        "$(/usr/libexec/java_home -v 17 2>/dev/null || true)" \
+        /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+        /usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home; do
+        if [ -n "$candidate" ] && [ -x "$candidate/bin/java" ]; then
+            JAVA_HOME="$candidate"
+            break
+        fi
+    done
+fi
+if [ -n "$JAVA_HOME" ]; then
+    export JAVA_HOME
+elif ! java -version >/dev/null 2>&1; then
+    echo "JDK 17 が見つかりません。brew install openjdk@17 で入れるか、JAVA_HOME を設定してください。" >&2
     exit 1
 fi
 

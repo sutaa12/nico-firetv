@@ -26,7 +26,10 @@ class AppContainer(context: Context) {
     val cookieJar = WebViewCookieJar()
     /** 更新の少ない情報（シリーズ・動画情報・一覧の応答）の保存先 */
     val metaCache = app.nicotv.firetv.data.local.MetaCache(java.io.File(context.filesDir, "meta-cache"))
-    val nico = NicoProvider(cookieJar, metaCache)
+    val nico = NicoProvider(cookieJar, metaCache).also { p ->
+        // センシティブな作品の表示設定を一覧の取得に反映する
+        p.showSensitive = store.settings.showSensitive
+    }
     /** シーク用の縮小画像の保存先 */
     val storyboards = app.nicotv.firetv.data.local.StoryboardStore(java.io.File(context.filesDir, "storyboard"))
     val demo = DemoProvider()

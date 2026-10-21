@@ -61,6 +61,8 @@ enum class Entitlement(val label: String, val playable: Boolean) {
     REGION("地域等の制限", false),
     DELETED("公開終了・削除", false),
     UNSUPPORTED_FORMAT("再生方式が未対応", false),
+    /** センシティブな作品（年齢制限）。アカウントの表示設定がオフ */
+    SENSITIVE("センシティブ（年齢制限）", false),
 }
 
 enum class BillingKind(val label: String) {
@@ -223,4 +225,4 @@ data class MylistSummary(val provider: Provider, val id: String, val name: Strin
 
 data class MylistPage(val id: String, val name: String, val items: List<VideoSummary>, val totalCount: Int?, val hasNext: Boolean)
 
-enum class UploadSort(val label: String) { NEWEST("新しい順"), OLDEST("古い順"), POPULAR("再生数が多い順") }
+enum class UploadSort(val label: String) { NEWEST("新しい順"), OLDEST("古い順"), POPULAR("再生数が多い順"), COMMENTS("コメントが多い順") }

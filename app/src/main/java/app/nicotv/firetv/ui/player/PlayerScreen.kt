@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -762,6 +763,10 @@ fun PlayerScreen(app: AppState, entry: Entry, route: Route.Player) {
             .focusRequester(rootFocus)
             .focusable(),
     ) {
+        // 右にコメント一覧を出すときは、映像を縦横比のまま左へ縮める
+        val showCommentList = settings.commentListSide && commentMode != CommentMode.OFF && descriptor != null
+        Row(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxHeight()) {
         AndroidView(
             factory = { context ->
                 PlayerView(context).apply {
@@ -797,6 +802,16 @@ fun PlayerScreen(app: AppState, entry: Entry, route: Route.Player) {
                 fadeOld = settings.fadeOldComments,
                 onStats = { a, s, pr -> drawStats = DrawStats(a, s, pr) },
             )
+        }
+        }
+        if (showCommentList) {
+            val w = settings.commentListWidth.coerceIn(0.15f, 0.45f)
+            CommentSidePanel(
+                comments = filteredComments,
+                positionMs = { exo.currentPosition },
+                modifier = Modifier.fillMaxHeight().weight(w / (1f - w)),
+            )
+        }
         }
 
         val title = buildString {

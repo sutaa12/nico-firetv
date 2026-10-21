@@ -94,6 +94,12 @@ data class Settings(
     val saveWatchHistory: Boolean = true,
     /** 取得したコメントを動画ごとに圧縮して保存し、次回はそこから展開する */
     val cacheComments: Boolean = true,
+    /** 再生位置までのコメントを、映像の右に一覧で表示する */
+    val commentListSide: Boolean = false,
+    /** 右のコメント一覧の幅（画面に対する割合） */
+    val commentListWidth: Float = 0.26f,
+    /** センシティブな作品（年齢制限）もランキング・一覧に含める（18 歳以上の利用者が任意でオン） */
+    val showSensitive: Boolean = false,
 )
 
 @Serializable

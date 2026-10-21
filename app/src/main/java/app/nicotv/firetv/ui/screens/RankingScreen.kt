@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -44,6 +47,8 @@ import app.nicotv.firetv.ui.TvButton
 import app.nicotv.firetv.ui.TvText
 import app.nicotv.firetv.ui.VideoCard
 import app.nicotv.firetv.ui.remembered
+import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -53,7 +58,12 @@ fun RankingScreen(app: AppState, entry: Entry) {
     val catalog = app.c.catalog
     val data by app.c.store.data.collectAsState()
     val account = app.c.store.account(data)
-    val genres = catalog.rankingGenres
+    var genres by remember { mutableStateOf(entry.keep("genres") { catalog.rankingGenres }) }
+    // 公式のジャンル一覧を取る（センシティブ表示の設定を変えたら取り直す）
+    LaunchedEffect(catalog, data.settings.showSensitive) {
+        val g = catalog.loadRankingGenres()
+        if (g.isNotEmpty()) { genres = g; entry.memory["genres"] = g }
+    }
     val terms = catalog.rankingTerms
     var genre by remember { mutableStateOf(entry.keep("genre") { genres.find { it.id == account.lastRankingGenre } ?: genres.first() }) }
     var term by remember { mutableStateOf(entry.keep("term") { terms.find { it.id == account.lastRankingTerm } ?: terms.find { it.id == "24h" } ?: terms.first() }) }
@@ -64,6 +74,8 @@ fun RankingScreen(app: AppState, entry: Entry) {
     loadable.load(scope)
     val mem = entry.focus
     var menuFor by remember { mutableStateOf<VideoSummary?>(null) }
+    var screenFocused by remember { mutableStateOf(false) }
+    var headerFocused by remember { mutableStateOf(false) }
     val gridState = entry.keep("grid-$condKey") { LazyGridState() }
     val snapshot = (loadable.result as? LoadResult.Ok<RankingSnapshot>)?.value
 
@@ -76,7 +88,19 @@ fun RankingScreen(app: AppState, entry: Entry) {
         app.c.store.setRankingPref(g.id, t.id)
     }
 
-    Column(Modifier.fillMaxSize().padding(start = 36.dp, end = 24.dp, top = 22.dp)) {
+    val gRow = entry.keep("genreRow") { LazyListState() }
+    // 戻る: 一覧にいるときは、まず上のカテゴリ（選択中のジャンル）へ。カテゴリにいるときは左メニューへ（アプリ全体の戻る）
+    BackHandler(enabled = screenFocused && !headerFocused) {
+        scope.launch {
+            val i = genres.indexOfFirst { it.id == genre.id }.coerceAtLeast(0)
+            runCatching { gRow.scrollToItem(i) }
+            awaitFrame()
+            runCatching { mem.requester("genre:${genre.id}").requestFocus() }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().onFocusChanged { screenFocused = it.hasFocus }.padding(start = 36.dp, end = 24.dp, top = 22.dp)) {
+        Column(Modifier.onFocusChanged { headerFocused = it.hasFocus }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("ランキング", fontSize = TvText.title, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(24.dp))
@@ -87,7 +111,6 @@ fun RankingScreen(app: AppState, entry: Entry) {
             Spacer(Modifier.weight(1f))
             TvButton("更新", { forceNext.set(true); loadable.load(scope, force = true) }, Modifier.remembered(mem, "refresh"))
         }
-        val gRow = entry.keep("genreRow") { LazyListState() }
         LazyRow(state = gRow, horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 10.dp, horizontal = 6.dp)) {
             items(genres, key = { it.id }) { g ->
                 Chip(g.label, g == genre, { select(g = g) }, Modifier.remembered(mem, "genre:${g.id}"))
@@ -95,6 +118,7 @@ fun RankingScreen(app: AppState, entry: Entry) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
             terms.forEach { t -> Chip(t.label, t == term, { select(t = t) }, Modifier.remembered(mem, "term:${t.id}")) }
+        }
         }
         when (val r = loadable.result) {
             null -> StatusBox("読み込み中…")

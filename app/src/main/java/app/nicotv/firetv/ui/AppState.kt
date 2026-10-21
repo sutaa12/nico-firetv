@@ -190,6 +190,15 @@ class AppState(val c: AppContainer, private val scope: CoroutineScope, val exitA
     }
 
     fun entitlementHelp(v: VideoSummary, ent: Entitlement, reason: String?) {
+        if (ent == Entitlement.SENSITIVE) {
+            error = ErrorInfo(
+                title = ent.label,
+                message = (reason ?: app.nicotv.firetv.data.nico.NicoProvider.SENSITIVE_HELP) +
+                    "\n\n設定を変えたあと、詳細画面の「権限を再確認」を選んでください。",
+                officialUrl = "https://www.nicovideo.jp/watch/${v.id}",
+            )
+            return
+        }
         error = ErrorInfo(
             title = ent.label,
             message = buildString {

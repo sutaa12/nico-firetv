@@ -74,6 +74,14 @@ class NicoProvider(
 ) : CatalogProvider {
     override val provider = Provider.NICO
 
+    /**
+     * センシティブな作品（年齢制限）を一覧に含めるか。オンのときは一覧 API に sensitiveContents=mask を付ける。
+     * オフのときは何も付けない（従来どおり）。再生できるかはアカウントの表示設定（viewer.allowSensitiveContents）による
+     */
+    @Volatile var showSensitive: Boolean = false
+
+    private fun sens(): String = if (showSensitive) "&sensitiveContents=mask" else ""
+
     val http: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -112,6 +120,30 @@ class NicoProvider(
         RankingGenre("commentary_lecture", "解説・講座"),
         RankingGenre("other", "その他"),
     )
+    /**
+     * 公式のランキングのジャンル一覧（nvapi v2/genres）。サービス側で増減するので固定の一覧より優先する。
+     * センシティブな作品を表示する設定のときは sensitiveContents=mask を付ける（年齢制限向けのジャンルがあれば含まれる）。
+     * 取れなければ固定の一覧を使う
+     */
+    override suspend fun loadRankingGenres(): List<RankingGenre> {
+        val url = "https://nvapi.nicovideo.jp/v2/genres" + (if (showSensitive) "?sensitiveContents=mask" else "")
+        val r = cachedCall(url, DAY)
+        if (r !is Http.Ok) return rankingGenres
+        val list = r.body["data"]["genres"].arr.mapNotNull { g ->
+            val key = g["key"].str ?: return@mapNotNull null
+            RankingGenre(key, g["label"].str ?: key)
+        }
+        android.util.Log.i("NicoTVRanking", "genres sensitive=$showSensitive keys=${list.joinToString(",") { it.id }}")
+        if (list.isEmpty()) return rankingGenres
+        // 年齢制限のジャンル（r18）は、センシティブな作品を表示する設定のときだけ並べ、いちばん最後に置く
+        // 公式の表示名は「例のソレ」。年齢制限のジャンルだと分かるよう R-18 を添える
+        val adult = list.filter { it.id == R18_GENRE }.map { g -> g.copy(label = (g.label.takeIf { it != R18_GENRE } ?: "例のソレ") + "（R-18）") }
+        val normal = list.filter { it.id != R18_GENRE }
+        // 「全ジャンル」は先頭に固定する
+        val all = normal.firstOrNull { it.id == "all" } ?: rankingGenres.first()
+        return listOf(all) + normal.filter { it.id != "all" } + (if (showSensitive) adult else emptyList())
+    }
+
     override val rankingTerms = listOf(
         RankingTerm("hour", "毎時"),
         RankingTerm("24h", "24時間"),
@@ -219,7 +251,7 @@ class NicoProvider(
     }
 
     override suspend fun ranking(genre: RankingGenre, term: RankingTerm, page: Int, force: Boolean): LoadResult<RankingSnapshot> {
-        val url = "https://nvapi.nicovideo.jp/v1/ranking/genre/${genre.id}?term=${term.id}&page=$page"  // pageSize は指定不可 (1ページ100件)
+        val url = "https://nvapi.nicovideo.jp/v1/ranking/genre/${genre.id}?term=${term.id}&page=$page" + sens()  // pageSize は指定不可 (1ページ100件)
         // 毎時は更新が早いので短く、それ以外は長めに使い回す
         val ttl = when (term.id) { "hour" -> 10 * MIN; "24h" -> 30 * MIN; else -> 2 * HOUR }
         return when (val r = cachedCall(url, ttl, force = force)) {
@@ -228,6 +260,11 @@ class NicoProvider(
                 if (r.body["meta"]["status"].int != 200) return metaFailure(r.body, r.code)
                 val items = r.body["data"]["items"] as? kotlinx.serialization.json.JsonArray
                     ?: return LoadResult.Failed(FailKind.UNKNOWN_FORMAT, "items がありません")
+                // 年齢制限まわりの確認用（件数と、ぼかし指定の有無だけを記録する）
+                if (showSensitive || genre.id == R18_GENRE) android.util.Log.i(
+                    "NicoTVRanking",
+                    "ranking ${genre.id}/${term.id} items=${items.size} masked=${items.count { it["requireSensitiveMasking"].bool == true }} keys=${(items.firstOrNull() as? JsonObject)?.keys}",
+                )
                 val offset = (page - 1) * 100
                 val videos = items.mapIndexedNotNull { i, v -> parseNvapiVideo(v, rank = offset + i + 1) }
                 LoadResult.Ok(
@@ -361,7 +398,7 @@ class NicoProvider(
         var total: Int? = null
         var page = fromPage
         while (page < fromPage + maxPages) {
-            val r = call(get("https://nvapi.nicovideo.jp/v2/series/$id?page=$page&pageSize=$pageSize"))
+            val r = call(get("https://nvapi.nicovideo.jp/v2/series/$id?page=$page&pageSize=$pageSize" + sens()))
             val fail = when {
                 r is Http.Err -> LoadResult.Failed(r.kind, r.message)
                 r is Http.Ok && r.body["meta"]["status"].int != 200 -> metaFailure(r.body, r.code)
@@ -423,11 +460,12 @@ class NicoProvider(
             UploadSort.NEWEST -> "registeredAt" to "desc"
             UploadSort.OLDEST -> "registeredAt" to "asc"
             UploadSort.POPULAR -> "viewCount" to "desc"
+            UploadSort.COMMENTS -> "commentCount" to "desc"
         }
         if (owner.isChannel) return channelRss(owner.id, page).map { (_, list) -> VideoPage(list, null, list.size >= 20) }
         val size = 50
         val url = if (owner.isChannel) "https://nvapi.nicovideo.jp/v1/channels/${owner.id}/videos?sortKey=$key&sortOrder=$order&pageSize=$size&page=$page"
-        else "https://nvapi.nicovideo.jp/v2/users/${owner.id}/videos?sortKey=$key&sortOrder=$order&pageSize=$size&page=$page"
+        else "https://nvapi.nicovideo.jp/v2/users/${owner.id}/videos?sortKey=$key&sortOrder=$order&pageSize=$size&page=$page" + sens()
         return when (val r = cachedCall(url, 15 * MIN, scoped = true)) {
             is Http.Err -> LoadResult.Failed(r.kind, r.message).also { android.util.Log.i("NicoTVOwner", "videos ${owner.id} failed ${r.kind} ${r.message} session=${cookieJar.hasSession()}") }
             is Http.Ok -> {
@@ -456,12 +494,12 @@ class NicoProvider(
             http.newCall(req).execute().use { res ->
                 if (!res.isSuccessful) return@withContext LoadResult.Failed(if (res.code == 404) FailKind.NOT_FOUND else FailKind.NETWORK, "HTTP ${res.code}")
                 val xml = res.body?.boundedText().orEmpty()
-                val name = Regex("<dc:creator>([^<]*)</dc:creator>").find(xml)?.groupValues?.get(1)?.let(::unescapeHtml)
-                val items = Regex("<item>(.*?)</item>", RegexOption.DOT_MATCHES_ALL).findAll(xml).mapNotNull { m ->
-                    val item = m.groupValues[1]
+                val name = between(xml, "<dc:creator>", "</dc:creator>")?.let { unescapeHtml(it) }
+                // 文書全体に正規表現を当てない（ネイティブで大きく作業領域を使うため）。項目ごとに切り出す
+                val items = splitBetween(xml, "<item>", "</item>").mapNotNull { item ->
                     val thumb = Regex("<img[^>]*src=\"([^\"]+)\"").find(item)?.groupValues?.get(1) ?: return@mapNotNull null
                     val num = Regex("/thumbnails/(\\d+)/").find(thumb)?.groupValues?.get(1) ?: return@mapNotNull null
-                    val title = Regex("<title>([^<]*)</title>").find(item)?.groupValues?.get(1)?.let(::unescapeHtml) ?: "so$num"
+                    val title = Regex("<title>([^<]*)</title>").find(item)?.groupValues?.get(1)?.let { unescapeHtml(it) } ?: "so$num"
                     val len = Regex("nico-info-length\">([0-9:]+)<").find(item)?.groupValues?.get(1)
                     val date = Regex("nico-info-date\">(\\d{4})年(\\d{2})月(\\d{2})日 (\\d{2})[：:](\\d{2})[：:](\\d{2})").find(item)?.groupValues
                     VideoSummary(
@@ -547,7 +585,7 @@ class NicoProvider(
     override suspend fun mylist(id: String, page: Int): LoadResult<MylistPage> {
         if (id == WATCH_LATER) return watchLater(page)
         if (id.startsWith("me:")) return ownMylist(id, page)
-        return when (val r = cachedCall("https://nvapi.nicovideo.jp/v2/mylists/$id?pageSize=100&page=$page", 30 * MIN, scoped = true)) {
+        return when (val r = cachedCall("https://nvapi.nicovideo.jp/v2/mylists/$id?pageSize=100&page=$page" + sens(), 30 * MIN, scoped = true)) {
             is Http.Err -> LoadResult.Failed(r.kind, r.message)
             is Http.Ok -> {
                 if (r.body["meta"]["status"].int != 200) return metaFailure(r.body, r.code)
@@ -561,7 +599,7 @@ class NicoProvider(
     /** 自分のマイリストの中身（変わりやすいので保存しない） */
     private suspend fun ownMylist(id: String, page: Int): LoadResult<MylistPage> {
         val real = id.removePrefix("me:")
-        return when (val r = call(get("https://nvapi.nicovideo.jp/v1/users/me/mylists/$real?pageSize=100&page=$page"))) {
+        return when (val r = call(get("https://nvapi.nicovideo.jp/v1/users/me/mylists/$real?pageSize=100&page=$page" + sens()))) {
             is Http.Err -> LoadResult.Failed(r.kind, r.message)
             is Http.Ok -> {
                 if (r.body["meta"]["status"].int != 200) return metaFailure(r.body, r.code)
@@ -576,7 +614,7 @@ class NicoProvider(
     /** あとで見る（新しく追加した順） */
     private suspend fun watchLater(page: Int): LoadResult<MylistPage> {
         if (!cookieJar.hasSession()) return LoadResult.Failed(FailKind.LOGIN_REQUIRED, "ログインが必要です")
-        return when (val r = call(get("https://nvapi.nicovideo.jp/v1/users/me/watch-later?sortKey=addedAt&sortOrder=desc&pageSize=100&page=$page"))) {
+        return when (val r = call(get("https://nvapi.nicovideo.jp/v1/users/me/watch-later?sortKey=addedAt&sortOrder=desc&pageSize=100&page=$page" + sens()))) {
             is Http.Err -> LoadResult.Failed(r.kind, r.message)
             is Http.Ok -> {
                 if (r.body["meta"]["status"].int != 200) return metaFailure(r.body, r.code)
@@ -646,9 +684,10 @@ class NicoProvider(
                 http.newCall(req).execute().use { res ->
                     if (!res.isSuccessful) { cacheable = false; return@use null }
                     val html = res.body?.boundedText() ?: return@use null
-                    // 視聴ページには画質の情報も入っているので、ついでに覚える
-                    qualityFromWatchPage(html)?.let { q -> onQualityKnown?.invoke(videoId, q) }
-                    seriesFromWatchPage(html)
+                    // 埋め込みデータは一度だけ切り出して解析する。画質の情報も入っているので、ついでに覚える
+                    val root = serverResponseOf(html)
+                    root?.let(::qualityFromServerResponse)?.let { q -> onQualityKnown?.invoke(videoId, q) }
+                    root?.let(::seriesFromServerResponse)
                 }
             } catch (_: IOException) {
                 cacheable = false
@@ -816,6 +855,12 @@ class NicoProvider(
                         rememberWatch(cacheKey, r.body)
                         return r.body to null
                     }
+                    if (data["reasonCode"].str == "HARMFUL_VIDEO") {
+                        return null to LoadResult.Failed(
+                            if (cookieJar.hasSession()) FailKind.NO_ENTITLEMENT else FailKind.LOGIN_REQUIRED,
+                            if (cookieJar.hasSession()) SENSITIVE_HELP else "センシティブな作品（年齢制限）はログインが必要です",
+                        )
+                    }
                     null to metaFailure(r.body, r.code)
                 } else {
                     rememberWatch(cacheKey, r.body)
@@ -846,6 +891,9 @@ class NicoProvider(
         val reason = d["okReason"].str ?: root["data"]["reasonCode"].str ?: root["meta"]["errorCode"].str
         return when {
             status == 200 && domand != null && available -> Entitlement.AVAILABLE to reason
+            // センシティブな作品（年齢制限）。ログインしていて、アカウントの表示設定がオンなら再生できる
+            reason == "HARMFUL_VIDEO" && !cookieJar.hasSession() -> Entitlement.LOGIN_REQUIRED to "センシティブな作品（年齢制限）はログインが必要です"
+            reason == "HARMFUL_VIDEO" -> Entitlement.SENSITIVE to SENSITIVE_HELP
             d["video"]["isDeleted"].bool == true -> Entitlement.DELETED to reason
             status == 200 && domand == null && d["media"]["delivery"] != null ->
                 Entitlement.UNSUPPORTED_FORMAT to "旧配信方式（暗号化等）はこのアプリでは未対応"
@@ -1095,7 +1143,7 @@ class NicoProvider(
      */
     suspend fun officialHistory(cursor: String? = null): LoadResult<OfficialHistoryPage> {
         // v1 は廃止 (404)。v2 は 2026-09-25 に実機で確認: {items:[{itemId, viewedAt, video}], nextCursor}。再生位置は含まれない
-        val url = "https://nvapi.nicovideo.jp/v2/users/me/watch/history?pageSize=50" + (cursor?.let { "&cursor=" + enc(it) } ?: "")
+        val url = "https://nvapi.nicovideo.jp/v2/users/me/watch/history?pageSize=50" + sens() + (cursor?.let { "&cursor=" + enc(it) } ?: "")
         return when (val r = call(get(url))) {
             is Http.Err -> LoadResult.Failed(r.kind, r.message)
             is Http.Ok -> {
@@ -1132,6 +1180,12 @@ class NicoProvider(
         private const val HOUR = 60 * MIN
         private const val DAY = 24 * HOUR
         const val USER_AGENT = "Mozilla/5.0 (Linux; Android 9; AFTR) NicoTV-FireTV/0.1"
+        /** 年齢制限のランキングのジャンル */
+        const val R18_GENRE = "r18"
+
+        /** センシティブな作品を再生できないときの案内 */
+        const val SENSITIVE_HELP = "センシティブな作品（年齢制限）です。ニコニコのアカウントで「センシティブな作品」の表示設定がオフになっています。" +
+            "公式サイト・公式アプリのアカウント設定でオンにすると、このアプリでも再生できます（18 歳以上の方のみ）。"
         const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
         const val LOGIN_URL = "https://account.nicovideo.jp/login?site=niconico&next_url=%2F"
     }
@@ -1139,33 +1193,79 @@ class NicoProvider(
 
 private val pageJson = Json { ignoreUnknownKeys = true }
 
-/** 公式の視聴ページに埋め込まれた server-response から、動画が属するシリーズを読む */
-internal fun seriesFromWatchPage(html: String): SeriesRef? {
-    val m = Regex("name=\"server-response\" content=\"([^\"]+)\"").find(html) ?: return null
-    val root = runCatching { pageJson.parseToJsonElement(unescapeHtml(m.groupValues[1])) }.getOrNull()
-    return root["data"]["response"]["series"]?.let(::seriesRefOf)
+/**
+ * 公式の視聴ページに埋め込まれた server-response（HTML エスケープされた JSON）を、位置の検索で切り出して解析する。
+ * 正規表現は使わない。Android の正規表現はネイティブ（ICU）で動き、数 MB ある属性値に `[^"]+` を当てると
+ * 1文字ごとに後戻り用の記録を積んで一時的に数百 MB を使い、端末全体がメモリ不足で固まったため (2026-09-27 実機で確認)
+ */
+internal fun serverResponseOf(html: String): JsonElement? {
+    val marker = "name=\"server-response\" content=\""
+    val at = html.indexOf(marker)
+    if (at < 0) return null
+    val start = at + marker.length
+    val end = html.indexOf('"', start)
+    if (end <= start) return null
+    return runCatching { pageJson.parseToJsonElement(unescapeHtml(html, start, end)) }.getOrNull()
 }
 
-internal fun qualityFromWatchPage(html: String): String? {
-    val m = Regex("name=\"server-response\" content=\"([^\"]+)\"").find(html) ?: return null
-    val root = runCatching { pageJson.parseToJsonElement(unescapeHtml(m.groupValues[1])) }.getOrNull()
-    return root["data"]["response"]["media"]["domand"]["videos"].arr.maxByOrNull { it["qualityLevel"].int ?: -1 }?.get("label").str
-}
+/** 視聴ページから、動画が属するシリーズを読む */
+internal fun seriesFromWatchPage(html: String): SeriesRef? = serverResponseOf(html)?.let(::seriesFromServerResponse)
+
+internal fun seriesFromServerResponse(root: JsonElement): SeriesRef? = root["data"]["response"]["series"]?.let(::seriesRefOf)
+
+internal fun qualityFromServerResponse(root: JsonElement): String? =
+    root["data"]["response"]["media"]["domand"]["videos"].arr.maxByOrNull { it["qualityLevel"].int ?: -1 }?.get("label").str
 
 internal fun seriesRefOf(s: JsonElement): SeriesRef? {
     val id = s["id"].str ?: return null
     return SeriesRef(id, s["title"].str ?: "シリーズ")
 }
 
-internal fun unescapeHtml(s: String): String {
-    val named = mapOf("quot" to "\"", "amp" to "&", "lt" to "<", "gt" to ">", "apos" to "'")
-    return Regex("&(#x[0-9a-fA-F]+|#[0-9]+|[a-z]+);").replace(s) { m ->
-        val e = m.groupValues[1]
-        when {
-            e.startsWith("#x") -> e.drop(2).toIntOrNull(16)?.let { String(Character.toChars(it)) } ?: m.value
-            e.startsWith("#") -> e.drop(1).toIntOrNull()?.let { String(Character.toChars(it)) } ?: m.value
-            else -> named[e] ?: m.value
+/**
+ * HTML の文字参照（&quot; &amp; &#39; &#x2F; など）を戻す。[start]〜[end] の範囲だけを読む。
+ * 大きな文字列でも一度の走査で済むよう、正規表現を使わずに1文字ずつ読む。知らない参照はそのまま残す
+ */
+internal fun unescapeHtml(s: String, start: Int = 0, end: Int = s.length): String {
+    val out = StringBuilder(end - start)
+    var i = start
+    while (i < end) {
+        val c = s[i]
+        if (c == '&') {
+            val semi = s.indexOf(';', i + 1)
+            if (semi in (i + 2)..minOf(end - 1, i + 12)) {
+                val e = s.substring(i + 1, semi)
+                val decoded: String? = when {
+                    e.startsWith("#x") || e.startsWith("#X") -> e.drop(2).toIntOrNull(16)?.takeIf { Character.isValidCodePoint(it) }?.let { String(Character.toChars(it)) }
+                    e.startsWith("#") -> e.drop(1).toIntOrNull()?.takeIf { Character.isValidCodePoint(it) }?.let { String(Character.toChars(it)) }
+                    else -> when (e) { "quot" -> "\""; "amp" -> "&"; "lt" -> "<"; "gt" -> ">"; "apos" -> "'"; else -> null }
+                }
+                if (decoded != null) { out.append(decoded); i = semi + 1; continue }
+            }
         }
+        out.append(c)
+        i++
+    }
+    return out.toString()
+}
+
+/** [open] と [close] の間の文字列（最初の1つ） */
+internal fun between(s: String, open: String, close: String): String? {
+    val a = s.indexOf(open)
+    if (a < 0) return null
+    val b = s.indexOf(close, a + open.length)
+    return if (b < 0) null else s.substring(a + open.length, b)
+}
+
+/** [open] と [close] で囲まれた部分をすべて */
+internal fun splitBetween(s: String, open: String, close: String): Sequence<String> = sequence {
+    var from = 0
+    while (true) {
+        val a = s.indexOf(open, from)
+        if (a < 0) break
+        val b = s.indexOf(close, a + open.length)
+        if (b < 0) break
+        yield(s.substring(a + open.length, b))
+        from = b + close.length
     }
 }
 

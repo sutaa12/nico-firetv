@@ -232,6 +232,7 @@ private fun CommentDefaultsSection(app: AppState) {
         ChoiceRow("低評価コメント", "NG共有「中」相当（スコア -4800 以下）を隠します。", listOf(true, false), s.hideLowScore, { if (it) "隠す" else "表示" }) { v -> st.updateSettings { it.copy(hideLowScore = v) } }
         ChoiceRow("文字の大きさ", null, listOf(0.8f, 1.0f, 1.2f, 1.4f), s.commentScale, { "${(it * 100).toInt()}%" }) { v -> st.updateSettings { it.copy(commentScale = v) } }
         ChoiceRow("不透明度", null, listOf(0.5f, 0.7f, 0.9f, 1.0f), s.commentOpacity, { "${(it * 100).toInt()}%" }) { v -> st.updateSettings { it.copy(commentOpacity = v) } }
+        ChoiceRow("右にコメント一覧", "再生位置までのコメントを映像の右に一覧で表示します（YouTube のチャット欄と同じ形）。映像は縦横比のまま左へ縮みます。再生中はコメントパネルからも切り替えられます。", listOf(false, true), s.commentListSide, { if (it) "表示" else "非表示" }) { v -> st.updateSettings { it.copy(commentListSide = v) } }
         ChoiceRow("古いコメントを薄く", "取得したコメントを投稿日時の順に並べ、古いものほど薄く描きます（いちばん古いもので15%）。投稿者コメントはそのままです。", listOf(false, true), s.fadeOldComments, { if (it) "オン" else "オフ" }) { v -> st.updateSettings { it.copy(fadeOldComments = v) } }
         ChoiceRow("上・下固定コメント", null, listOf(true, false), s.showFixedComments, { if (it) "表示" else "非表示" }) { v -> st.updateSettings { it.copy(showFixedComments = v) } }
         ChoiceRow("下端の余白（字幕よけ）", null, listOf(0f, 0.1f, 0.2f), s.bottomMarginRatio, { if (it == 0f) "なし" else "${(it * 100).toInt()}%" }) { v -> st.updateSettings { it.copy(bottomMarginRatio = v) } }
@@ -333,6 +334,12 @@ private fun DisplaySection(app: AppState) {
                 "「表示中の動画を調べる」は画面に出たサムネイルごとに動画情報を取得します（ログインせずに取得しますが、通信が増え、再生数に数えられる可能性があります）。",
             listOf(false, true), s.probeQuality, { if (it) "表示中の動画を調べる" else "見た動画だけ" },
         ) { v -> app.c.store.updateSettings { it.copy(probeQuality = v) } }
+        ChoiceRow(
+            "センシティブな作品（年齢制限）",
+            "オンにすると、ランキングに R-18 のジャンルを加え、投稿動画・マイリストなどにもセンシティブな作品を表示します（18 歳以上の方のみ）。" +
+                "再生には、ニコニコのアカウントの「センシティブな作品」の表示設定もオンにする必要があります。",
+            listOf(false, true), s.showSensitive, { if (it) "表示する" else "表示しない" },
+        ) { v -> app.c.store.updateSettings { it.copy(showSensitive = v) }; app.c.nico.showSensitive = v }
     }
 }
 

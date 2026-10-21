@@ -9,6 +9,9 @@ data class SearchPage(val items: List<VideoSummary>, val totalCount: Long?, val 
 interface CatalogProvider {
     val provider: Provider
     val rankingGenres: List<RankingGenre>
+
+    /** 公式のジャンル一覧を取る。取れなければ [rankingGenres] */
+    suspend fun loadRankingGenres(): List<RankingGenre> = rankingGenres
     val rankingTerms: List<RankingTerm>
 
     /** [force] は保存済みを使わず取り直す（［更新］ボタン） */

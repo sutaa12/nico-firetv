@@ -14,8 +14,8 @@ android {
         // Fire TV Cube 第1世代 (Fire OS 6 / Android 7.1 = API 25) まで対応
         minSdk = 25
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.2.0"
     }
 
     buildTypes {

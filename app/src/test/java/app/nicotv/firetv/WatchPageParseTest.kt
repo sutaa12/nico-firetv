@@ -6,6 +6,7 @@ import app.nicotv.firetv.data.nico.seriesFromWatchPage
 import app.nicotv.firetv.data.nico.splitBetween
 import app.nicotv.firetv.data.nico.unescapeHtml
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
@@ -16,6 +17,24 @@ class WatchPageParseTest {
         // 知らない参照・閉じていない & はそのまま
         assertEquals("&nbsp; & x &;", unescapeHtml("&nbsp; & x &;"))
         assertEquals("b", unescapeHtml("a&quot;b&quot;c", 7, 8))
+    }
+
+    @Test(timeout = 5000) fun ampersandsWithoutEntitiesRemainLinear() {
+        val input = "&".repeat(1_000_000)
+        assertEquals(input, unescapeHtml(input))
+        assertEquals(input + ";", unescapeHtml(input + ";"))
+    }
+
+    @Test fun entityOutsideRequestedRangeIsNotRead() {
+        assertEquals("&amp", unescapeHtml("&amp;", end = 4))
+        assertEquals("&#x110000; &#-1;", unescapeHtml("&#x110000; &#-1;"))
+        assertEquals("&quot;", unescapeHtml("&amp;quot;"))
+    }
+
+    @Test fun absentOrMalformedServerResponseReturnsNull() {
+        assertNull(serverResponseOf("<html></html>"))
+        assertNull(serverResponseOf("<meta name=\"server-response\" content=\"{broken\">"))
+        assertNull(serverResponseOf("<meta name=\"server-response\" content=\""))
     }
 
     @Test fun largeServerResponseIsParsed() {

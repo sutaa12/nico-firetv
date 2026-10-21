@@ -1231,7 +1231,10 @@ internal fun unescapeHtml(s: String, start: Int = 0, end: Int = s.length): Strin
     while (i < end) {
         val c = s[i]
         if (c == '&') {
-            val semi = s.indexOf(';', i + 1)
+            // 文字参照の最大長までだけ探索する。& が連続しても残り全文を繰り返し走査しない。
+            val limit = minOf(end - 1, i + 12)
+            var semi = i + 1
+            while (semi <= limit && s[semi] != ';') semi++
             if (semi in (i + 2)..minOf(end - 1, i + 12)) {
                 val e = s.substring(i + 1, semi)
                 val decoded: String? = when {
